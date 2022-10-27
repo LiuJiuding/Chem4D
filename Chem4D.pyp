@@ -3,10 +3,9 @@ import c4d
 from PDT import PDTGeo, PDTFunction, C4DFunction
 import os
 import copy
-import rdkit
 from rdkit import Chem
 
-PLUGINID = 1059607
+PLUGINID = 1059606
 PLUGINNAME = "Chem4D"
 VERSION = "1.0.0"
 TITLE = f"{PLUGINNAME} v{VERSION}"
@@ -32,7 +31,7 @@ class CHEM4DHelper(object):
     
     @staticmethod
     def ReadMol(path):
-        if path == None:
+        if path == '':
             return False
         if os.path.isfile(path) == False:
             print('path is not valid')
@@ -267,7 +266,7 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 node.SetDirty(c4d.DIRTYFLAGS_DATA)             
                 return True
         return True
-    
+
     def GetVirtualObjects(self, op, hh):
         #after click update button, cache all geometry under rootobj, change parameters of children only to speed up the plugin
         if self.update == True:
@@ -275,6 +274,8 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
             #check path and creat rdkit mol
             mol = self.ReadMol(op[c4d.ID_MOL_PATH])
             if mol == False:
+                self.hasobj = False
+                self.update = False
                 return None
 
             #setup self.geo and self.parameters

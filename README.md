@@ -6,10 +6,11 @@
 3. Chem4D relies on third party python module to read mol files. Go to C4D installation folder "XXX\Maxon Cinema 4D R26\resource\modules\python\libs\python39.win64.framework", hold shift and click right mouse button to open powershell, type
 `.\python -m pip install rdkit` and hit enter
 4. Done!
-## Some tips
+## Tips
 * Press C (make editable) and you will find that this molecule is built with Cloners.
 * Open C4D console to see outputs of this plugin when it doesn't work right.
-* It is a good habit to backup your work when using Chem4D, it may be unstable:)
+* It is a good habit to backup your work when using Chem4D, it may be unstable :)
+* The plugin is only tested on C4D S26.107, other versions may work.
 ## Change list
 ### v1.0.0
 Features in initial release.<br>
