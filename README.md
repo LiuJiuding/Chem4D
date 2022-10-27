@@ -3,7 +3,7 @@
 ## Installation
 1. Download the release package and unzip it in your C4D plugins folder "XXX\Maxon Cinema 4D R26\plugins"
 2. Cut \_\_init__.py and PDT.py to C4D's python lib folder "C:\Users\XXX\AppData\Roaming\Maxon\Maxon Cinema 4D R26_042F1048\python39\libs"
-3. Chem4D relies on third party python module to read mol files. Go to C4D installation folder "XXX\Maxon Cinema 4D R26\resource\modules\python\libs\python39.win64.framework", hold shift and click right mouse button to open powershell, type
+3. Chem4D relies on third party python module `rdkit` to read mol files. Go to C4D installation folder "XXX\Maxon Cinema 4D R26\resource\modules\python\libs\python39.win64.framework", hold shift and click right mouse button to open powershell, type
 `.\python -m pip install rdkit` and hit enter
 4. Done!
 ## Tips
