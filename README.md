@@ -7,6 +7,7 @@
 `.\python -m pip install rdkit` and hit enter
 4. Done!
 ## Tips
+* Use .mol2 file whenever possible, it supports more molecular data.
 * Press C (make editable) and you will find that this molecule is built with Cloners.
 * Open C4D console to see outputs of this plugin when it doesn't work right.
 * It is a good habit to backup your work when using Chem4D, it may be unstable :)
@@ -18,3 +19,6 @@ Features in initial release.<br>
 2. Change overall atom radius, atom segements and bond radius
 3. Change atom color and radius for each element in the molecular
 4. Chem4D reads the AtomProperties.txt file to set initial atom radius and color, you can add element symbols and modify this file. e.g. H radius R G B
+
+Issues.
+* Can NOT undo if you delete the Chem4D object in Attribute Manager.
