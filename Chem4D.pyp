@@ -263,7 +263,8 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
         if type==c4d.MSG_DESCRIPTION_COMMAND:
             if data['id'][0].id==c4d.ID_UPDATE:
                 self.update = True
-                node.SetDirty(c4d.DIRTYFLAGS_DATA)             
+                node.SetDirty(c4d.DIRTYFLAGS_DATA)
+                
                 return True
         return True
 
@@ -377,7 +378,7 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 indnum = indnum +1
             self.update = False
             self.hasobj = True
-        
+            op.SetDirty(c4d.DIRTYFLAGS_DESCRIPTION)
         if self.hasobj == False:
             return None
         #read static descriptions
