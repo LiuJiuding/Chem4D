@@ -11,7 +11,7 @@
 * Press C (make editable) and you will find that this molecule is built with Cloners.
 * Open C4D console to see outputs of this plugin when it doesn't work right.
 * It is a good habit to backup your work when using Chem4D, it may be unstable :)
-* The plugin is only tested on C4D S26.107, other versions may work.
+* The plugin is only tested on C4D R26.107, other versions may work.
 ## Change list
 ### v1.0.0
 Features in initial release.<br>
