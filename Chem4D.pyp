@@ -1,19 +1,10 @@
-################# Chem4D V1.0.0 ##################
 import c4d
-from PDT import PDTGeo, PDTFunction, C4DFunction
 import os
-import copy
+from PDT import PDTGeo, PDTFunction, C4DFunction
 from rdkit import Chem
-
-PLUGINID = 1059606
-PLUGINNAME = "Chem4D"
-VERSION = "1.0.0"
-TITLE = f"{PLUGINNAME} v{VERSION}"
-HELP = "molecular building tool"
-# Dynamic group and parameters IDs
-CHEM4D_DYNAMICGROUP = 1100
-CHEM4D_DYNAMICGROUP_FIRSTPARAMETER = CHEM4D_DYNAMICGROUP + 1
-
+PLUGIN_ID = 1059606
+PLUGI_NNAME = "Chem4D"
+VERSION = "1.1.0"
 
 class CHEM4DHelper(object):
     #read property file
@@ -81,233 +72,106 @@ class CHEM4DHelper(object):
             PDTFunction.setprimattrib(geo_bond,'symbol',bondend,endsymbol)
         return geo,geo_bond
 
-class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
+class ChemDialog(c4d.gui.GeDialog, CHEM4DHelper):
+    ID_GROUP = 100
+    ID_FILEPATH = 1000
+    ID_BUTTON_CREATE = 1001
 
-    def __init__(self):
-        self.hasobj = False
-        self.update = False
-        self.read = False
-        self.read_dprop = {}
-        self.parameters = []
-        self.geo = PDTGeo()
-        self.geo_bond = PDTGeo()
-        self.rootobj = c4d.BaseObject(5140)
-        self.SetOptimizeCache(True)
-
-    def Init(self, node):
-        node[c4d.ID_MOL_ATOM_RADIUS_SCALE] = 1.0
-        node[c4d.ID_MOL_ATOM_SEGMENTS] = 20
-        node[c4d.ID_MOL_BOND_RADIUS] = 1.0
-        node[c4d.ID_MOL_BUILD_MODE] = 0
-
+    def InitValues(self):
         #read property file
         directory, _ = os.path.split(__file__)
         fn = os.path.join(directory, "AtomProperties.txt")
         self.read_dprop = self.ReadProperty(fn)
+
+    def CreateLayout(self):
+        """This Method is called automatically when Cinema 4D Create the Layout (display) of the Dialog."""
+        # Defines the title of the Dialog
+        self.SetTitle(PLUGI_NNAME+VERSION)
+
+        # Creates a Ok and Cancel Button
+        self.GroupBegin(self.ID_GROUP, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, cols= 2, rows= 1, title= "", groupflags= 0, initw= 0, inith= 0)
+        customdata = c4d.BaseContainer()
+        # set gui by following line
+        # customdata[c4d.FILENAME_SAVE] = True
+        self.AddCustomGui(self.ID_FILEPATH, c4d.CUSTOMGUI_FILENAME, name= "File", flags= c4d.BFH_SCALEFIT, minw= 10, minh= 10, customdata= customdata)
+        self.AddButton(self.ID_BUTTON_CREATE, c4d.BFH_FIT, initw= 50, inith= 10, name= "Create")
+        self.GroupEnd()
         return True
+    
+    def Command(self, messageId, bc):
+        """This Method is called automatically when the user clicks on a gadget and/or changes its value this function will be called.
+        It is also called when a string menu item is selected.
 
-    def Read(self, node, hf, level):
-        # Reads the number of dynamic parameters
-        node[c4d.ID_MOL_ATOM_RADIUS_SCALE] = hf.ReadFloat32()
-        node[c4d.ID_MOL_ATOM_SEGMENTS] = hf.ReadInt32()
-        node[c4d.ID_MOL_BOND_RADIUS] = hf.ReadFloat32()
-        self.hasobj = hf.ReadBool()
-        self.read = True
-        self.update = True
-        count = hf.ReadInt32()
-        # Reads the dynamic parameters value
-        for idx in range(int(count/2)):
-            value = hf.ReadFloat32()
-            self.parameters.append(value)
-            value = hf.ReadVector()
-            self.parameters.append(value)
-        return True
+        Args:
+            messageId (int): The ID of the gadget that triggered the event.
+            bc (c4d.BaseContainer): The original message container.
 
-    def Write(self, node, hf):
-        # Writes the number of dynamic parameters
-        hf.WriteFloat32(node[c4d.ID_MOL_ATOM_RADIUS_SCALE])
-        hf.WriteInt32(node[c4d.ID_MOL_ATOM_SEGMENTS])
-        hf.WriteFloat32(node[c4d.ID_MOL_BOND_RADIUS])
-        hf.WriteBool(self.hasobj)
-        count = len(self.parameters)
-        hf.WriteInt32(count)
-        # Writes the dynamic parameters value
-        for i in range(int(count/2)):
-            hf.WriteFloat32(self.parameters[2*i])
-            hf.WriteVector(self.parameters[2*i+1])
-        return True
-
-    def CopyTo(self, dest, snode, dnode, flags, trn):
-        # Copies dynamic parameters value to the destination instance of ObjectData
-        dest.update = copy.copy(self.update)
-        dest.hasobj = copy.copy(self.hasobj)
-        dest.read = copy.copy(self.read)
-        dest.read_dprop = copy.copy(self.read_dprop)
-        dest.parameters = copy.copy(self.parameters)
-        dest.geo = copy.copy(self.geo)
-        dest.geo_bond = copy.copy(self.geo_bond)
-        return True
-
-    def GetDDescription(self, node, description, flags):
-        # Loads the parameters from the description resource before adding dynamic parameters.
-        if not description.LoadDescription(node.GetType()):
-            return False
-
-        # Get description single ID
-        singleID = description.GetSingleDescID()
-
-        # Declare dynamic group DescID
-        dynamicGroupID = c4d.DescID(c4d.DescLevel(CHEM4D_DYNAMICGROUP, c4d.DTYPE_GROUP, node.GetType()))
-
-        # Check if dynamic group needs to be added
-        addDynamicGroup = singleID is None
-        if not addDynamicGroup:
-            addDynamicGroup = dynamicGroupID.IsPartOf(singleID)[0]
-
-        # Adds dynamic group
-        if addDynamicGroup:
-            bc = c4d.GetCustomDataTypeDefault(c4d.DTYPE_GROUP)
-            bc.SetString(c4d.DESC_NAME, "Atom Property")
-            bc.SetInt32(c4d.DESC_COLUMNS, 1)
-            if not description.SetParameter(dynamicGroupID, bc, c4d.DescID(c4d.DescLevel((c4d.ID_OBJECTPROPERTIES)))):
-                return False
-
-        # Declare REAL parameter container
-        bc_real = c4d.GetCustomDataTypeDefault(c4d.DTYPE_REAL)
-        bc_real.SetInt32(c4d.DESC_CUSTOMGUI, c4d.CUSTOMGUI_REAL)
-        bc_real.SetFloat(c4d.DESC_MIN, 0.0)
-        bc_real.SetFloat(c4d.DESC_MAX, 200.0)
-        # bc_real.SetFloat(c4d.DESC_MINSLIDER, 0.0)
-        # bc_real.SetFloat(c4d.DESC_MAXSLIDER, 200.0)
-        bc_real.SetFloat(c4d.DESC_STEP, 1)
-        bc_real.SetInt32(c4d.DESC_UNIT, c4d.DESC_UNIT_FLOAT)
-        bc_real.SetInt32(c4d.DESC_ANIMATE, c4d.DESC_ANIMATE_ON)
-        bc_real.SetBool(c4d.DESC_REMOVEABLE, False)
-
-        bc_color = c4d.GetCustomDataTypeDefault(c4d.DTYPE_COLOR)
-        bc_color.SetInt32(c4d.DESC_CUSTOMGUI, c4d.CUSTOMGUI_COLOR)
-
-        # Initialize/Update parameters value list if needed
-        parametersNum = len(self.geo.pointgroups)*2
-        parametersLen = len(self.parameters)
-
-        if parametersNum == 0:
-            self.parameters = []
-        elif parametersLen != parametersNum:
-            self.parameters.clear()
-            for i in self.geo.pointgroups:
-                self.parameters.append(self.var_read_dprop[i][0])
-                self.parameters.append(self.var_read_dprop[i][1])
-
-        # Adds dynamic parameters
-        idx = 0
-        for symbol in self.geo.pointgroups:
-            descid = c4d.DescID(c4d.DescLevel(CHEM4D_DYNAMICGROUP_FIRSTPARAMETER+2*idx, c4d.DTYPE_REAL, node.GetType()))
-            addParameter = singleID is None
-            if not addParameter:
-                addParameter = descid.IsPartOf(singleID)[0]
-
-            if addParameter:
-                name = "Atom Scale " + symbol
-                bc_real.SetString(c4d.DESC_NAME, name)
-                bc_real.SetString(c4d.DESC_SHORT_NAME, name)
-                if not description.SetParameter(descid, bc_real, dynamicGroupID):
-                    break
-
-            descid = c4d.DescID(c4d.DescLevel(CHEM4D_DYNAMICGROUP_FIRSTPARAMETER+2*idx+1, c4d.DTYPE_COLOR, node.GetType()))
-            addParameter = singleID is None
-            if not addParameter:
-                addParameter = descid.IsPartOf(singleID)[0]
-
-            if addParameter:
-                name = "Atom Color " + symbol
-                bc_color.SetString(c4d.DESC_NAME, name)
-                bc_color.SetString(c4d.DESC_SHORT_NAME, name)
-                if not description.SetParameter(descid, bc_color, dynamicGroupID):
-                    break
-            idx = idx + 1
-
-        # After dynamic parameters have been added successfully, return True and c4d.DESCFLAGS_DESC_LOADED with the input flags
-        return True, flags | c4d.DESCFLAGS_DESC_LOADED
-
-    def SetDParameter(self, node, id, data, flags):
-        # Retrieves the parameter ID requested
-        paramID = id[0].id
-
-        # Retrieves the parameters count
-        parametersLen = len(self.parameters)
-
-        # Checks if passed parameter ID is a dynamic parameter
-        if CHEM4D_DYNAMICGROUP_FIRSTPARAMETER <= paramID <= CHEM4D_DYNAMICGROUP+parametersLen:
-            # Store the parameter data
-            self.parameters[paramID-CHEM4D_DYNAMICGROUP_FIRSTPARAMETER] = data
-            return True, flags | c4d.DESCFLAGS_SET_PARAM_SET
-
-        return False
-
-    def GetDParameter(self, node, id, flags):
-        # Retrieves the parameter ID requested
-        paramID = id[0].id
-
-        # Retrieves the parameters count
-        parametersLen = len(self.parameters)
-
-        # Checks passed parameter ID is a dynamic parameter
-        if CHEM4D_DYNAMICGROUP_FIRSTPARAMETER <= paramID <= CHEM4D_DYNAMICGROUP+parametersLen:
-            # Retrieves the parameter data
-            data = self.parameters[paramID-CHEM4D_DYNAMICGROUP_FIRSTPARAMETER]
-            return True, data, flags | c4d.DESCFLAGS_GET_PARAM_GET
-        return False
-
-    def Message(self, node, type, data):
-        if type==c4d.MSG_DESCRIPTION_COMMAND:
-            if data['id'][0].id==c4d.ID_UPDATE:
-                self.update = True
-                node.SetDirty(c4d.DIRTYFLAGS_DATA)
-                
-                return True
-        return True
-
-    def GetVirtualObjects(self, op, hh):
-        #after click update button, cache all geometry under rootobj, change parameters of children only to speed up the plugin
-        if self.update == True:
-            self.rootobj = c4d.BaseObject(5140)
+        Returns:
+            bool: False if there was an error, otherwise True.
+        """
+        # User click on Creat
+        if messageId == self.ID_BUTTON_CREATE:
             #check path and creat rdkit mol
-            mol = self.ReadMol(op[c4d.ID_MOL_PATH])
+            print(self.GetFilename(self.ID_FILEPATH), "Create MOL")
+            mol = self.ReadMol(self.GetFilename(self.ID_FILEPATH))
             if mol == False:
-                self.hasobj = False
-                self.update = False
-                return None
+                return True
+            # print(self.GetFilename(self.ID_FILEPATH), "Create MOL")
+            geo, geo_bond = self.BuildPDTGeo(mol)
+            parameters = []
+            for i in geo.pointgroups:
+                parameters.append(self.read_dprop[i][0])
+                parameters.append(self.read_dprop[i][1])
 
-            #setup self.geo and self.parameters
-            self.geo,self.geo_bond = self.BuildPDTGeo(mol)
-            if self.read == False:
-                self.parameters.clear()
-                for i in self.geo.pointgroups:
-                    self.parameters.append(self.read_dprop[i][0])
-                    self.parameters.append(self.read_dprop[i][1])
-                self.update = False
-                self.hasobj = True
-            
-            #set null objects
-            self.rootobj[c4d.ID_BASELIST_NAME] = os.path.basename(op[c4d.ID_MOL_PATH])
+
+            doc = c4d.documents.GetActiveDocument()
+
+            rootobj = c4d.BaseObject(5140)
+            rootobj[c4d.ID_BASELIST_NAME] = os.path.basename(self.GetFilename(self.ID_FILEPATH))
             rootatom = c4d.BaseObject(5140)
             rootatom[c4d.ID_BASELIST_NAME] = 'atom'
             rootbond = c4d.BaseObject(5140)
             rootbond[c4d.ID_BASELIST_NAME] = 'bond'
-            rootatom.InsertUnder(self.rootobj)
-            rootbond.InsertUnder(self.rootobj)
-
-            #creat point cloud mesh
-            pos = self.geo.GetP()
+            rootatom.InsertUnder(rootobj)
+            rootbond.InsertUnder(rootobj)
+            
+            pos = geo.GetP()
             pmesh = C4DFunction.postomesh(pos)
             pmesh[c4d.ID_BASELIST_NAME] = "PositionMesh"
-            pmesh.InsertUnder(self.rootobj)
+            pmesh.InsertUnder(rootobj)
+            t = c4d.BaseTag(c4d.Tpython)
 
+            # bc_buildtype = c4d.GetCustomDataTypeDefault(c4d.DTYPE_LONG)
+            bc_buildtype = c4d.gui.QuickTabCustomGui()
+
+            # bc_buildtype[c4d.DESC_NAME] = "Build type"
+            # bc_buildtype[c4d.DESC_CUSTOMGUI] = c4d.CUSTOMGUI_QUICKTAB
+            bc_buildtype.AppendString(1, "a")
+            bc_buildtype.AppendString(2, "b")
+            bc_buildtype[c4d.QUICKTAB_BAR] = False
+            descId_buildtype = t.AddUserData(bc_buildtype)
+            t[descId_buildtype] = 1
             #iterate atom symbols and build hierarchy
             indnum = 0
             rad = 1
-            for i in self.geo.pointgroups:
+
+            for i in geo.pointgroups:
+                # create userdata on python tag-----------------------------------------------------------
+                # use template to set type and name
+                bc_radius = c4d.GetCustomDataTypeDefault(c4d.DTYPE_REAL)
+                bc_radius[c4d.DESC_NAME] = "Radius " + i
+                bc_radius[c4d.DESC_MIN] = 0
+                bc_radius[c4d.DESC_MAX] = 200
+                # get id
+                descId_radius = t.AddUserData(bc_radius)
+                # set value
+                t[descId_radius] = parameters[2*indnum]*rad
+
+                bc_color = c4d.GetCustomDataTypeDefault(c4d.DTYPE_COLOR)
+                bc_color[c4d.DESC_NAME] = "Color " + i
+                descId_color = t.AddUserData(bc_color)
+                t[descId_color] = parameters[2*indnum+1]
+
                 #creat atoms---------------------------------------------------------------------------------
                 #creat point selection tags
                 seltag = c4d.BaseTag(c4d.Tpointselection)
@@ -316,7 +180,7 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 #the returned BaseSelect obj can be modified and automatically updated back to selection tag
                 sel = seltag.GetBaseSelect()
                 #select points from mark list, 1 is selected, 0 is unselected
-                marklist = self.geo.GetPointGroup(i)
+                marklist = geo.GetPointGroup(i)
                 sel.SetAll(marklist)
                 
                 #attach tag to mesh obj
@@ -325,7 +189,7 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 #setup cloner
                 sph = c4d.BaseObject(5160)
                 sph[c4d.ID_BASELIST_NAME] = i
-                sph[c4d.PRIM_SPHERE_RAD] = self.parameters[2*indnum]*rad
+                sph[c4d.PRIM_SPHERE_RAD] = 1
                 sph[c4d.PRIM_SPHERE_TYPE] = 4
                 sph[c4d.PRIM_SPHERE_SUB] = 10
                 sphphone = c4d.BaseTag(5612)
@@ -334,24 +198,25 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 cln = c4d.BaseObject(1018544)
                 cln[c4d.ID_BASELIST_NAME] = i
                 cln[c4d.MGCLONER_VOLUMEINSTANCES_MODE] = 1
-                cln[c4d.ID_MG_TRANSFORM_COLOR] = self.parameters[2*indnum+1]
+                cln[c4d.ID_MG_TRANSFORM_SCALE] = c4d.Vector(t[descId_radius])
+                cln[c4d.ID_MG_TRANSFORM_COLOR] = t[descId_color]
                 cln[c4d.ID_MG_MOTIONGENERATOR_MODE] = 0
                 cln[c4d.MG_OBJECT_LINK] = pmesh
                 cln[c4d.MG_POLY_MODE_] = 0
                 cln[c4d.MG_POLY_SELECTION] = i
 
                 sph.InsertUnder(cln)
-                cln.InsertUnder(rootatom)
+                cln.InsertUnderLast(rootatom)
 
                 #creat bond splines------------------------------------------------------------------------
                 #iterate bonds and get position list for atom type i
                 #creat empty spline
                 spl = c4d.BaseObject(5101)
                 linepos = []
-                for prim in self.geo_bond.primitives:
+                for prim in geo_bond.primitives:
                     if prim.symbol == i:
                         for vertex in prim.vertices:
-                            linepos.append(self.geo_bond.GetP()[vertex.pointnumber])
+                            linepos.append(geo_bond.GetP()[vertex.pointnumber])
                 #set point count and segment count
                 spl.ResizeObject(len(linepos), int(len(linepos)/2))
 
@@ -370,68 +235,90 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 sweepphone[c4d.PHONGTAG_PHONG_ANGLELIMIT] = 1
                 sweep.InsertTag(sweepphone)
                 sweep[c4d.ID_BASEOBJECT_USECOLOR] = 2
-                sweep[c4d.ID_BASEOBJECT_COLOR] = self.parameters[2*indnum+1]
+                sweep[c4d.ID_BASEOBJECT_COLOR] = t[descId_color]
                 sweep[c4d.ID_BASELIST_NAME] = i
                 spl.InsertUnder(sweep)
                 circle.InsertUnder(sweep)
-                sweep.InsertUnder(rootbond)
+                sweep.InsertUnderLast(rootbond)
+
                 indnum = indnum +1
-            self.update = False
-            self.hasobj = True
-            op.SetDirty(c4d.DIRTYFLAGS_DESCRIPTION)
-        if self.hasobj == False:
-            return None
-        #read static descriptions
-        atomrad = op[c4d.ID_MOL_ATOM_RADIUS_SCALE]
-        seg = op[c4d.ID_MOL_ATOM_SEGMENTS]
-        bondrad = op[c4d.ID_MOL_BOND_RADIUS]
+            rootobj.InsertTag(t)
+            doc.InsertObject(rootobj)
 
-        #change parameters of cloner atom
-        clns = self.rootobj.GetDownLast().GetChildren()
-        clns.reverse()
-        for i in range(len(clns)):
-            clns[i][c4d.ID_MG_TRANSFORM_COLOR] = self.parameters[2*i+1]
-            clns[i].GetDown()[c4d.PRIM_SPHERE_SUB] = seg
-            if op[c4d.ID_MOL_BUILD_MODE] == 2:
-                clns[i].GetDown()[c4d.PRIM_SPHERE_RAD] = 10 * bondrad
-            else:
-                clns[i].GetDown()[c4d.PRIM_SPHERE_RAD] = self.parameters[2*i]*atomrad
-        
-        #change parameters of sweep bond
-        sweeps = self.rootobj.GetDown().GetNext().GetChildren()
-        sweeps.reverse()
-        for i in range(len(sweeps)):
-            sweeps[i].GetDown()[c4d.PRIM_CIRCLE_RADIUS] = 10 * bondrad
-            sweeps[i][c4d.ID_BASEOBJECT_COLOR] = self.parameters[2*i+1]
-        
-        #always build bond, but show it if nessary
-        if op[c4d.ID_MOL_BUILD_MODE] == 1:
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 1   #default is 2, hide is 1, show is 0
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 1
-        else:
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 2
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 2
-        return self.rootobj
+            t[c4d.TPYTHON_CODE] = '''
+from typing import Optional
+import c4d
 
+doc: c4d.documents.BaseDocument # The document evaluating this tag
+op: c4d.BaseTag # The Python scripting tag
+flags: int # c4d.EXECUTIONFLAGS
+priority: int # c4d.EXECUTIONPRIORITY
+tp: Optional[c4d.modules.thinkingparticles.TP_MasterSystem] # Particle system
+bt: Optional[c4d.threading.BaseThread] # The thread executing this tag
+
+def main() -> None:
+    # Called when the tag is executed. It can be called multiple time per frame. Similar to TagData.Execute.
+    # Write your code here
+    root = op.GetObject()
+    root_bond = root.GetDownLast().GetPred().GetChildren()
+    root_atom = root.GetDownLast().GetChildren()
+    # print(root_bond,root_atom)
+    t = root.GetTag(c4d.Tpython)
+    for i in range(len(root_atom)):
+        root_bond[i][c4d.ID_BASEOBJECT_COLOR] = t[c4d.ID_USERDATA, 2*i+2]
+        root_atom[i][c4d.ID_MG_TRANSFORM_SCALE] = c4d.Vector(t[c4d.ID_USERDATA, 2*i+1])
+        root_atom[i][c4d.ID_MG_TRANSFORM_COLOR] = t[c4d.ID_USERDATA, 2*i+2]
+
+'''
+            c4d.EventAdd()
+            return True
+        return True
+    
+class ChemCommand(c4d.plugins.CommandData):
+    """Command Data class that holds the ExampleDialog instance."""
+    dialog = None
+    
+    def Execute(self, doc):
+        """Called when the user executes a command via either CallCommand() or a click on the Command from the extension menu.
+
+        Args:
+            doc (c4d.documents.BaseDocument): The current active document.
+
+        Returns:
+            bool: True if the command success.
+        """
+        # Creates the dialog if its not already exists
+        if self.dialog is None:
+            self.dialog = ChemDialog()
+
+        # Opens the dialog
+        return self.dialog.Open(dlgtype=c4d.DLG_TYPE_ASYNC, pluginid=PLUGIN_ID, defaultw=400, defaulth=32)
+
+    def RestoreLayout(self, sec_ref):
+        """Used to restore an asynchronous dialog that has been placed in the users layout.
+
+        Args:
+            sec_ref (PyCObject): The data that needs to be passed to the dialog.
+
+        Returns:
+            bool: True if the restore success
+        """
+        # Creates the dialog if its not already exists
+        if self.dialog is None:
+            self.dialog = ChemDialog()
+
+        # Restores the layout
+        return self.dialog.Restore(pluginid=PLUGIN_ID, secret=sec_ref)
+    
 # main
 if __name__ == "__main__":
-    # Retrieves the icon path
-    directory, _ = os.path.split(__file__)
-    fn = os.path.join(directory, "res", "omolreader.png")
-
-    # Creates a BaseBitmap
-    bmp = c4d.bitmaps.BaseBitmap()
-    if bmp is None:
-        raise MemoryError("Failed to create a BaseBitmap.")
-
-    # Init the BaseBitmap with the icon
-    if bmp.InitWith(fn)[0] != c4d.IMAGERESULT_OK:
-        raise MemoryError("Failed to initialize the BaseBitmap.")
-
     # Registers the plugin
-    c4d.plugins.RegisterObjectPlugin(id=PLUGINID,
-                                      str=TITLE,
-                                      g=CHEM4D,
-                                      description="Omolreader", #file name without .res
-                                      info=c4d.OBJECT_GENERATOR|c4d.OBJECT_USECACHECOLOR,
-                                      icon=bmp)
+    c4d.plugins.RegisterCommandPlugin(id=PLUGIN_ID,
+                                      str="Chem4D",
+                                      info=0,
+                                      help="Display a basic GUI",
+                                      dat=ChemCommand(),
+                                      icon=None)
+
+    
+

@@ -1,3 +1,4 @@
+############ PDT v1.1.0 ###############
 import c4d
 
 class PDTPoint(object):
