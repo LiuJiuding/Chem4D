@@ -1,0 +1,26 @@
+STRINGTABLE Ocifreader
+{
+	Ocifreader					"CIF Reader";
+    ID_CIF_PATH					"Filename";
+	ID_CIF_UPDATE					"Update";
+	ID_CIF_ATOM_RADIUS_SCALE	"Radius Scale";
+	ID_CIF_ATOM_SEGMENTS		"Segments";
+	ID_CIF_BOND_RADIUS			"Bond Radius";
+	ID_CIF_BUILD_MODE			"Build Mode";
+		ID_CIF_BUILD_MODE_BALLSTICK		"Ball Stick";
+		ID_CIF_BUILD_MODE_BALL			"Ball";
+		ID_CIF_BUILD_MODE_STICK			"Stick";
+		ID_CIF_BUILD_MODE_POLY			"Polyhedral";
+	ID_CIF_A_MIN 				"a min";
+	ID_CIF_A_MAX 				"a max";
+	ID_CIF_B_MIN 				"b min";
+	ID_CIF_B_MAX 				"b max";
+	ID_CIF_C_MIN 				"c min";
+	ID_CIF_C_MAX 				"c max";
+
+	ID_SHOW						"Show Componet";
+	ID_SHOW_ATOM				"Atom";
+	ID_SHOW_BOND				"Bond";
+	ID_SHOW_POLY				"Polyhedra";
+
+}

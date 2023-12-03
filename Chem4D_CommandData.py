@@ -8,7 +8,7 @@ from rdkit import Chem
 
 from c4d import BaseContainer
 PLUGIN_ID = 1059606
-PLUGI_NNAME = "Chem4D"
+PLUGI_NNAME = "Chem4DCommand"
 VERSION = "1.1.0"
 
 class CHEM4DHelper(object):
@@ -26,7 +26,7 @@ class CHEM4DHelper(object):
         return dprop
     
     @staticmethod
-    def ReadMol(path) -> tuple[PDTGeo, PDTGeo] | typing.Literal[False]:
+    def ReadMol(path):
         if path == '':
             return False
         if os.path.isfile(path) == False:

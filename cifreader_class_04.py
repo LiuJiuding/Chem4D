@@ -56,6 +56,10 @@ def ConvexHull(convex_pos:list[c4d.Vector]) -> c4d.PolygonObject:
 
 def ReadCif(path, a_min=0, a_max=1, b_min=0, b_max=1, c_min=0, c_max=1):
     cryst = Crystal.from_cif(path)
+    groups = cryst.groupby(by="equivalent_atoms")
+    print(type(groups))
+
+    print(groups)
     a,b,c = cryst.lattice_vectors
 
     geo = PDT.PDTGeo()
@@ -77,7 +81,7 @@ def ReadCif(path, a_min=0, a_max=1, b_min=0, b_max=1, c_min=0, c_max=1):
     return geo
 
 def main() -> None:
-    path = "G:\GitClone\Chem4D\cif\Li2TiO3.cif"
+    path = "G:\GitClone\Chem4D\sample\Li2MnO3.cif"
     a_min = 0
     a_max = 1
     b_min = 0
@@ -99,12 +103,12 @@ def main() -> None:
             cations.append(site.type_symbol[:-2])
         elif site.type_symbol[-1] == "-": 
             anions.append(site.type_symbol[:-2])
-        # elif site.type_symbol[-1] == "0": 
-        #     cations.append(site.type_symbol[:-1])
-        #     anions.append(site.type_symbol[:-1])
-        #     isatom = True
+        elif site.type_symbol[-1] == "0": 
+            cations.append(site.type_symbol[:-1])
+            anions.append(site.type_symbol[:-1])
+            isatom = True
 
-    print(cations,anions)
+    # print(cations,anions)
     
     # 去除所有阴离子
     # if not isatom:
@@ -138,7 +142,7 @@ def main() -> None:
         for i in ind:
             distance.append(np.linalg.norm(ligands[i]-centers[1]))
         distance.sort()
-        print(distance)
+        # print(distance)
         # if isatom:
         #     distance.pop[0]
         k: int
@@ -147,13 +151,13 @@ def main() -> None:
             if distance[i+1]-distance[i]>100:
                 k = i+1
                 break
-        print(k)
+        # print(k)
         geo_bond = PDT.PDTGeo()
         for center in centers:
             # ind是凸包点的序号
             d, ind = kt.query(x=center, k=k)
             convex_pos = ligands[ind]
-            print(ind)
+            # print(ind)
             anion_index.extend(ind.tolist())
             # 生成多面体
             if k>3:
