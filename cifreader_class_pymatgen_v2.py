@@ -245,7 +245,7 @@ def BuildCrystal(path,dprop,mode = "slow"):
         inside = []
         for i in range(len(cryst)):
             inside.append(i)
-            p = nptoc4d(cryst[i].coords)*scale
+            p = cryst[i].coords*scale
             ptnum = PDTFunction.addpoint(geo, p)
             symbol = getsymbol(cryst[i])
             PDTFunction.setpointattrib(geo, "symbol", ptnum, symbol)
@@ -266,47 +266,50 @@ def BuildCrystal(path,dprop,mode = "slow"):
         for i in inside:
             dicts = NN.get_nn_info(cryst,i)
             # begin property
-            beginpos = nptoc4d(cryst[i].coords)*scale
+            beginpos = cryst[i].coords*scale
             beginlabel = cryst[i].label
             beginsymbol = getsymbol(cryst[i])
             pos = []
             for dic in dicts:
                 # end property
-                endpos = nptoc4d(dic["site"].coords)*scale
+                endpos = dic["site"].coords*scale
                 pos.append(endpos)
                 midpos = (beginpos + endpos) * 0.5
 
-                p = dic["site"].coords
-                f = np.linalg.solve(m.T,p)
-                
-                # print(f,outside)
                 # 创建中心bond：中心是阴离子 且 配体在边界之外，不创建中心bond
-
-                # print(cryst[i].label,f)
                 beginnum = PDTFunction.addpoint(geo_bond,beginpos)
                 midnum = PDTFunction.addpoint(geo_bond,midpos)
                 bondbegin = PDTFunction.addprim(geo_bond,'polyline',[beginnum,midnum])
                 PDTFunction.setprimattrib(geo_bond,'label',bondbegin,beginlabel)
                 PDTFunction.setprimattrib(geo_bond,'Cd',bondbegin,dprop[beginsymbol][1])
-            # print(len(pos))
+
+            pos = PDTTranslation.listtoc4d(pos)
             if charge_dict[cryst[i].label] == "+" and len(pos)>3:
                 poly = ConvexHull(pos)
                 poly.SetName(cryst[i].label)
                 poly[c4d.ID_BASEOBJECT_USECOLOR] = 2
-                poly[c4d.ID_BASEOBJECT_COLOR] = dprop[getsymbol(cryst[i])][1]
+                poly[c4d.ID_BASEOBJECT_COLOR] = PDTTranslation.nptoc4d(dprop[getsymbol(cryst[i])][1])
                 poly[c4d.ID_BASEOBJECT_XRAY] = 1
                 poly.InsertUnder(poly_dict[cryst[i].label])
-
+        # print(m)
         geos = []
+        geos_bond = []
         for i in range(a):
             for j in range(b):
                 for k in range(c):
-                    geos.append(PDTFunction.translate(geo,c4d.Vector(i,j,k)*scale))
+                    t = (m[0]*i + m[1]*j + m[2]*k)*scale
+                    print(t)
+                    geos.append(PDTFunction.translate(geo,(m[0]*i + m[1]*j + m[2]*k)*scale))
+                    geos_bond.append(PDTFunction.translate(geo_bond,(m[0]*i + m[1]*j + m[2]*k)*scale))
+        print(geos_bond)
         geo = PDTFunction.merge(geos)
+        geo_bond = PDTFunction.merge(geos_bond)
+        print(geo_bond)
 
     # print(geo)
     # print(geo_bond)
-    print(geo_bond.primitivecount)
+    # print(geo_bond.primitivecount)
+    
     sweep = C4DFunction.CreateBond(geo_bond,"label")
     sweep.SetName("bond")
     # sweep[c4d.ID_BASEOBJECT_USECOLOR] = 2
@@ -329,14 +332,14 @@ def BuildCrystal(path,dprop,mode = "slow"):
 
 def main() -> None:
     # path = "G:\GitClone\Chem4D\sample\Fe(CO)5.cif"
-    path = "G:\GitClone\Chem4D\sample\LiCoO2.cif"
+    path = "G:\GitClone\Chem4D\sample\Fe(CO)5.cif"
     
     #read property file
     # directory, _ = os.path.split(__file__)
     fn = os.path.join(r"G:\GitClone\Chem4D", "elements.txt")
     dprop = ReadProperty(fn)
     # print(dprop)
-    BuildCrystal(path,dprop,mode="slow")
+    BuildCrystal(path,dprop,mode="fast")
     # targetdir = r"G:\GitClone\Chem4D\sample\test_structures\common_binaries"
     # files = os.listdir(targetdir)
     # for file in files:
