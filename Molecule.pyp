@@ -1,9 +1,10 @@
 ################# Chem4D V1.0.0 ##################
 import c4d
-from PDT import PDTGeo, PDTFunction, C4DFunction
+from PDT import PDTGeo, PDTFunction, C4DFunction, PDTTranslation
 import os
 import copy
 from rdkit import Chem
+import numpy as np
 
 PLUGINID = 1059606
 PLUGINNAME = "Chem4D Molecule"
@@ -23,11 +24,11 @@ class CHEM4DHelper(object):
         dprop = {}
         for line in fprop:
             f2 = line.strip().split()
-            dprop[f2[0]] = [int(f2[1]),c4d.Vector(int(f2[2]),int(f2[3]),int(f2[4]))/255]   #如果1个key有多个value，可以写成new_dict[f2[0]]  =  f2[1:]
+            dprop[f2[0]] = [int(f2[1]),np.array([int(f2[2]),int(f2[3]),int(f2[4])])/255]   #如果1个key有多个value，可以写成new_dict[f2[0]]  =  f2[1:]
 
         fprop.close()
-
-        return dprop
+        # print("read property ok")
+        return dprop 
     
     @staticmethod
     def ReadMol(path):
@@ -46,40 +47,9 @@ class CHEM4DHelper(object):
         else:
             print('successfully reading molecular file\n',path)
         return mol
-    @staticmethod
-    def BuildPDTGeo(mol):
-        pos = mol.GetConformer().GetPositions()
-        largepos = []
-        for p in pos:
-            largepos.append(c4d.Vector(p[0]*100,p[1]*100,p[2]*100))
-        pos = largepos
-        geo = PDTGeo(pos)
 
-        #atoms
-        for i in range(geo.pointcount):
-            PDTFunction.setpointgroup(geo, mol.GetAtomWithIdx(i).GetSymbol(), i, 1)
-            PDTFunction.setpointattrib(geo,'symbol',i,mol.GetAtomWithIdx(i).GetSymbol())
 
-        #bond
-        geo_bond = geo
-        for j in range(mol.GetNumBonds()):
-            beginnum = mol.GetBondWithIdx(j).GetBeginAtom().GetIdx()
-            endnum = mol.GetBondWithIdx(j).GetEndAtom().GetIdx()
 
-            beginpos = geo_bond.GetP()[beginnum]
-            endpos = geo_bond.GetP()[endnum]
-            midpos = (beginpos + endpos) * 0.5
-
-            midnum = PDTFunction.addpoint(geo_bond,midpos)
-
-            bondbegin = PDTFunction.addprim(geo_bond,'polyline',[beginnum,midnum])
-            bondend = PDTFunction.addprim(geo_bond,'polyline',[midnum,endnum])
-
-            beginsymbol = mol.GetBondWithIdx(j).GetBeginAtom().GetSymbol()
-            endsymbol = mol.GetBondWithIdx(j).GetEndAtom().GetSymbol()
-            PDTFunction.setprimattrib(geo_bond,'symbol',bondbegin,beginsymbol)
-            PDTFunction.setprimattrib(geo_bond,'symbol',bondend,endsymbol)
-        return geo,geo_bond
 
 class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
 
@@ -87,10 +57,9 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
         self.hasobj = False
         self.update = False
         self.read = False
-        self.read_dprop = {}
+        self.dprop = {}
         self.parameters = []
-        self.geo = PDTGeo()
-        self.geo_bond = PDTGeo()
+        self.symbols = []
         self.rootobj = c4d.BaseObject(5140)
         self.SetOptimizeCache(True)
 
@@ -103,7 +72,7 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
         #read property file
         directory, _ = os.path.split(__file__)
         fn = os.path.join(directory, "elements.txt")
-        self.read_dprop = self.ReadProperty(fn)
+        self.dprop = self.ReadProperty(fn)
         return True
 
     def Read(self, node, hf, level):
@@ -142,10 +111,10 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
         dest.update = copy.copy(self.update)
         dest.hasobj = copy.copy(self.hasobj)
         dest.read = copy.copy(self.read)
-        dest.read_dprop = copy.copy(self.read_dprop)
+        dest.dprop = copy.copy(self.dprop)
+        dest.symbols = copy.copy(self.symbols)
         dest.parameters = copy.copy(self.parameters)
-        dest.geo = copy.copy(self.geo)
-        dest.geo_bond = copy.copy(self.geo_bond)
+
         return True
 
     def GetDDescription(self, node, description, flags):
@@ -188,20 +157,20 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
         bc_color.SetInt32(c4d.DESC_CUSTOMGUI, c4d.CUSTOMGUI_COLOR)
 
         # Initialize/Update parameters value list if needed
-        parametersNum = len(self.geo.pointgroups)*2
+        parametersNum = len(self.symbols)*2
         parametersLen = len(self.parameters)
 
         if parametersNum == 0:
             self.parameters = []
         elif parametersLen != parametersNum:
             self.parameters.clear()
-            for i in self.geo.pointgroups:
+            for i in self.symbols:
                 self.parameters.append(self.var_read_dprop[i][0])
                 self.parameters.append(self.var_read_dprop[i][1])
 
         # Adds dynamic parameters
         idx = 0
-        for symbol in self.geo.pointgroups:
+        for symbol in self.symbols:
             descid = c4d.DescID(c4d.DescLevel(CHEM4D_DYNAMICGROUP_FIRSTPARAMETER+2*idx, c4d.DTYPE_REAL, node.GetType()))
             addParameter = singleID is None
             if not addParameter:
@@ -269,7 +238,11 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
 
     def GetVirtualObjects(self, op, hh):
         #after click update button, cache all geometry under rootobj, change parameters of children only to speed up the plugin
+        if self.hasobj == True and self.rootobj.GetDown() == None:
+            self.update = True
+
         if self.update == True:
+            scale = 100
             self.rootobj = c4d.BaseObject(5140)
             #check path and creat rdkit mol
             mol = self.ReadMol(op[c4d.ID_MOL_PATH])
@@ -278,103 +251,60 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 self.update = False
                 return None
 
-            #setup self.geo and self.parameters
-            self.geo,self.geo_bond = self.BuildPDTGeo(mol)
+
+            #setup geo, geo_bond and self.parameters
+            pos = mol.GetConformer().GetPositions() * scale
+            geo = PDTGeo(pos)
+
+            #atoms
+            for i in range(geo.pointcount):
+                symbol = mol.GetAtomWithIdx(i).GetSymbol()
+                PDTFunction.setpointgroup(geo, symbol, i, 1)
+                PDTFunction.setpointattrib(geo,'symbol', i, symbol)
+                PDTFunction.setpointattrib(geo, "pscale", i, self.dprop[symbol][0])
+                PDTFunction.setpointattrib(geo, "Cd", i, self.dprop[symbol][1])
+
+            #bond
+            geo_bond = copy.deepcopy(geo)
+            for j in range(mol.GetNumBonds()):
+                beginnum = mol.GetBondWithIdx(j).GetBeginAtom().GetIdx()
+                endnum = mol.GetBondWithIdx(j).GetEndAtom().GetIdx()
+
+                beginpos = geo_bond.GetP()[beginnum]
+                endpos = geo_bond.GetP()[endnum]
+                midpos = (beginpos + endpos) * 0.5
+
+                midnum = PDTFunction.addpoint(geo_bond,midpos)
+
+                bondbegin = PDTFunction.addprim(geo_bond,'polyline',[beginnum,midnum])
+                bondend = PDTFunction.addprim(geo_bond,'polyline',[midnum,endnum])
+
+                beginsymbol = mol.GetBondWithIdx(j).GetBeginAtom().GetSymbol()
+                endsymbol = mol.GetBondWithIdx(j).GetEndAtom().GetSymbol()
+                PDTFunction.setprimattrib(geo_bond,'symbol',bondbegin,beginsymbol)
+                PDTFunction.setprimattrib(geo_bond,'Cd',bondbegin,self.dprop[beginsymbol][1])
+                PDTFunction.setprimattrib(geo_bond,'symbol',bondend,endsymbol)
+                PDTFunction.setprimattrib(geo_bond,'Cd',bondend,self.dprop[endsymbol][1])
+            
             if self.read == False:
                 self.parameters.clear()
-                for i in self.geo.pointgroups:
-                    self.parameters.append(self.read_dprop[i][0])
-                    self.parameters.append(self.read_dprop[i][1])
+                for i in geo.pointgroups:
+                    self.parameters.append(self.dprop[i][0])
+                    self.parameters.append(PDTTranslation.nptoc4d(self.dprop[i][1]))
                 self.update = False
                 self.hasobj = True
-            
+                
+            self.symbols = geo.pointgroups
             #set null objects
             self.rootobj[c4d.ID_BASELIST_NAME] = os.path.basename(op[c4d.ID_MOL_PATH])
-            rootatom = c4d.BaseObject(5140)
-            rootatom[c4d.ID_BASELIST_NAME] = 'atom'
-            rootbond = c4d.BaseObject(5140)
-            rootbond[c4d.ID_BASELIST_NAME] = 'bond'
+
+            rootatom = C4DFunction.CreateAtom(geo,"symbol")
             rootatom.InsertUnder(self.rootobj)
-            rootbond.InsertUnder(self.rootobj)
 
-            #creat point cloud mesh
-            pos = self.geo.GetP()
-            pmesh = C4DFunction.CreateMesh(self.geo)
-            pmesh[c4d.ID_BASELIST_NAME] = "PositionMesh"
-            pmesh.InsertUnder(self.rootobj)
+            sweep = C4DFunction.CreateBond(geo_bond,"symbol")
+            sweep.SetName("bond")
+            sweep.InsertUnder(self.rootobj)
 
-            #iterate atom symbols and build hierarchy
-            indnum = 0
-            rad = 1
-            for i in self.geo.pointgroups:
-                #creat atoms---------------------------------------------------------------------------------
-                #creat point selection tags
-                seltag = c4d.BaseTag(c4d.Tpointselection)
-                seltag[c4d.ID_BASELIST_NAME] = i
-
-                #the returned BaseSelect obj can be modified and automatically updated back to selection tag
-                sel = seltag.GetBaseSelect()
-                #select points from mark list, 1 is selected, 0 is unselected
-                marklist = self.geo.GetPointGroupMark(i)
-                sel.SetAll(marklist)
-                
-                #attach tag to mesh obj
-                pmesh.InsertTag(seltag)
-
-                #setup cloner
-                sph = c4d.BaseObject(5160)
-                sph[c4d.ID_BASELIST_NAME] = i
-                sph[c4d.PRIM_SPHERE_RAD] = self.parameters[2*indnum]*rad
-                sph[c4d.PRIM_SPHERE_TYPE] = 4
-                sph[c4d.PRIM_SPHERE_SUB] = 10
-                sphphone = c4d.BaseTag(5612)
-                sphphone[c4d.PHONGTAG_PHONG_ANGLELIMIT] = 1
-                sph.InsertTag(sphphone)
-                cln = c4d.BaseObject(1018544)
-                cln[c4d.ID_BASELIST_NAME] = i
-                cln[c4d.MGCLONER_VOLUMEINSTANCES_MODE] = 1
-                cln[c4d.ID_MG_TRANSFORM_COLOR] = self.parameters[2*indnum+1]
-                cln[c4d.ID_MG_MOTIONGENERATOR_MODE] = 0
-                cln[c4d.MG_OBJECT_LINK] = pmesh
-                cln[c4d.MG_POLY_MODE_] = 0
-                cln[c4d.MG_POLY_SELECTION] = i
-
-                sph.InsertUnder(cln)
-                cln.InsertUnder(rootatom)
-
-                #creat bond splines------------------------------------------------------------------------
-                #iterate bonds and get position list for atom type i
-                #creat empty spline
-                spl = c4d.BaseObject(5101)
-                linepos = []
-                for prim in self.geo_bond.primitives:
-                    if prim.symbol == i:
-                        for vertex in prim.vertices:
-                            linepos.append(self.geo_bond.GetP()[vertex.pointnumber])
-                #set point count and segment count
-                spl.ResizeObject(len(linepos), int(len(linepos)/2))
-
-                #set point positions and assign point to segment
-                spl.SetAllPoints(linepos)
-                for j in range(int(len(linepos)/2)):
-                    spl.SetSegment(j, 2, False)
-                
-                #setup sweep
-                spl[c4d.ID_BASELIST_NAME] = i
-                spl.Message(c4d.MSG_UPDATE)
-                circle = c4d.BaseObject(5181)
-                circle[c4d.PRIM_CIRCLE_RADIUS] = 10
-                sweep = c4d.BaseObject(5118)
-                sweepphone = c4d.BaseTag(5612)
-                sweepphone[c4d.PHONGTAG_PHONG_ANGLELIMIT] = 1
-                sweep.InsertTag(sweepphone)
-                sweep[c4d.ID_BASEOBJECT_USECOLOR] = 2
-                sweep[c4d.ID_BASEOBJECT_COLOR] = self.parameters[2*indnum+1]
-                sweep[c4d.ID_BASELIST_NAME] = i
-                spl.InsertUnder(sweep)
-                circle.InsertUnder(sweep)
-                sweep.InsertUnder(rootbond)
-                indnum = indnum +1
             self.update = False
             self.hasobj = True
         
@@ -386,8 +316,9 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
         bondrad = op[c4d.ID_MOL_BOND_RADIUS]
 
         #change parameters of cloner atom
-        clns = self.rootobj.GetDownLast().GetChildren()
-        clns.reverse()
+        atomnull = self.rootobj.GetDownLast().GetDown().GetNext()
+        clns = atomnull.GetChildren()
+        # clns.reverse()
         for i in range(len(clns)):
             clns[i][c4d.ID_MG_TRANSFORM_COLOR] = self.parameters[2*i+1]
             clns[i].GetDown()[c4d.PRIM_SPHERE_SUB] = seg
@@ -397,19 +328,20 @@ class CHEM4D(c4d.plugins.ObjectData, CHEM4DHelper):
                 clns[i].GetDown()[c4d.PRIM_SPHERE_RAD] = self.parameters[2*i]*atomrad
         
         #change parameters of sweep bond
-        sweeps = self.rootobj.GetDown().GetNext().GetChildren()
-        sweeps.reverse()
+        bondnull = self.rootobj.GetDown()
+        sweeps = bondnull.GetChildren()
+        # sweeps.reverse()
         for i in range(len(sweeps)):
             sweeps[i].GetDown()[c4d.PRIM_CIRCLE_RADIUS] = 10 * bondrad
             sweeps[i][c4d.ID_BASEOBJECT_COLOR] = self.parameters[2*i+1]
         
         #always build bond, but show it if nessary
         if op[c4d.ID_MOL_BUILD_MODE] == 1:
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 1   #default is 2, hide is 1, show is 0
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 1
+            bondnull[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 1   #default is 2, hide is 1, show is 0
+            bondnull[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 1
         else:
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 2
-            self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 2
+            bondnull[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 2
+            bondnull[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 2
         return self.rootobj
 
 # main

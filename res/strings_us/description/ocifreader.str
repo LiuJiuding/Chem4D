@@ -6,21 +6,19 @@ STRINGTABLE Ocifreader
 	ID_CIF_ATOM_RADIUS_SCALE	"Radius Scale";
 	ID_CIF_ATOM_SEGMENTS		"Segments";
 	ID_CIF_BOND_RADIUS			"Bond Radius";
+	ID_CIF_SHOW_CELL			"Cell";
+	ID_CIF_SHOW_BOND				"Bond";
+	ID_CIF_SHOW_POLY				"Polyhedra";
 	ID_CIF_BUILD_MODE			"Build Mode";
 		ID_CIF_BUILD_MODE_BALLSTICK		"Ball Stick";
-		ID_CIF_BUILD_MODE_BALL			"Ball";
 		ID_CIF_BUILD_MODE_STICK			"Stick";
-		ID_CIF_BUILD_MODE_POLY			"Polyhedral";
-	ID_CIF_A_MIN 				"a min";
-	ID_CIF_A_MAX 				"a max";
-	ID_CIF_B_MIN 				"b min";
-	ID_CIF_B_MAX 				"b max";
-	ID_CIF_C_MIN 				"c min";
-	ID_CIF_C_MAX 				"c max";
-
-	ID_SHOW						"Show Componet";
-	ID_SHOW_ATOM				"Atom";
-	ID_SHOW_BOND				"Bond";
-	ID_SHOW_POLY				"Polyhedra";
+	ID_CIF_A 				"a";
+	ID_CIF_B				"b";
+	ID_CIF_C 				"c";
+	ID_CIF_CENTER_TYPE			"Center Type";
+		ID_CIF_CENTER_TYPE_GUESS		"Guess";
+		ID_CIF_CENTER_TYPE_SYMBOL			"Symbol";
+		ID_CIF_CENTER_TYPE_LABEL			"Label";
+	ID_CIF_POLY_CENTER				"Poly Center";
 
 }

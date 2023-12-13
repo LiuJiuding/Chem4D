@@ -5,14 +5,16 @@ from c4d import utils
 import os
 import copy
 
-import gemmi
-import pymatgen.core as pmg
-
-import numpy as np
-import scipy.spatial as spt
-
 import PDT
-from PDT import PDTGeo, PDTFunction, C4DFunction
+from PDT import PDTGeo, PDTFunction, C4DFunction, PDTTranslation
+
+import scipy.spatial as spt
+import pymatgen.core as pmg
+import pymatgen.analysis.local_env as pmg_env
+import numpy as np
+
+doc: c4d.documents.BaseDocument  # The active document
+op: Optional[c4d.BaseObject]  # The active object, None if unselected
 
 PLUGINID = 	1061833
 PLUGINNAME = "Chem4D Crystal"
@@ -22,174 +24,78 @@ HELP = "crystal building tool"
 # Dynamic group and parameters IDs
 CHEM4D_DYNAMICGROUP = 1100
 CHEM4D_DYNAMICGROUP_FIRSTPARAMETER = CHEM4D_DYNAMICGROUP + 1
-
-
-def nptoc4d(nparray:np.array):
-    if nparray.ndim == 1:
-        return c4d.Vector(nparray[0],nparray[1],nparray[2])
-    else:
-        c4dlist = []
-        for i in nparray:
-            c4dlist.append(c4d.Vector(i[0],i[1],i[2]))
-        return c4dlist
-
-
-def c4dtonp(c4darray):
-    if type(c4darray)==c4d.Vector:
-        return np.array([c4darray[0],c4darray[1],c4darray[2]])
-    else:
-        newlist = []
-        for i in c4darray:
-            newlist.append([i[0],i[1],i[2]])
-        return np.array(newlist)
         
 class CHEM4DHelper(object):
 
-    #read property file
+    @staticmethod
+    def GetSymbol(site):
+        symbol = ""
+        if type(site.specie)==pmg.periodic_table.Species:
+            symbol = str(site.specie.element)
+        else:
+            symbol = str(site.specie)
+        return symbol
+    
     @staticmethod
     def ReadProperty(file):
         fprop = open(file,'r')
         dprop = {}
         for line in fprop:
             f2 = line.strip().split()
-            dprop[f2[0]] = [int(f2[1]),c4d.Vector(int(f2[2]),int(f2[3]),int(f2[4]))/255]   #如果1个key有多个value，可以写成new_dict[f2[0]]  =  f2[1:]
+            dprop[f2[0]] = [int(f2[1]),np.array([int(f2[2]),int(f2[3]),int(f2[4])])/255]   #如果1个key有多个value，可以写成new_dict[f2[0]]  =  f2[1:]
 
         fprop.close()
         # print("read property ok")
-        return dprop
-    
-    @staticmethod
-    def FindKValue(center,ligands):
-        kt = spt.KDTree(ligands)
-        d, ind = kt.query(x=center,k=9)
-        distance = []
-        for i in ind:
-            distance.append(np.linalg.norm(ligands[i]-center))
-        distance.sort()
-        # print(distance)
-        k:int
-        for i in range(len(distance)):
-            if i>3:
-                sample = distance[:i]
-                variance = np.var(sample)
-                k = i
-                print(i, variance)
-                if variance>1000.0:
-                    break
-                
-        return k-1,kt
+        return dprop  
+        
     @staticmethod
     def ConvexHull(convex_pos:list[c4d.Vector]) -> c4d.PolygonObject:
-        hull = spt.ConvexHull(c4dtonp(convex_pos))
-        poly = c4d.PolygonObject(0,0)
-        poly.ResizeObject(len(convex_pos),len(hull.simplices))
-        poly.SetAllPoints(convex_pos)
-        i = 0
-        for simplex in hull.simplices:
-            ptnum = [simplex[0],simplex[1],simplex[2]]
-            a = convex_pos[simplex[1]] - convex_pos[simplex[0]]
-            b = convex_pos[simplex[2]] - convex_pos[simplex[0]]
-            normal = a.Cross(b)
-            angle = 0
-            for j in range(len(convex_pos)):
-                if j not in ptnum:
-                    v = convex_pos[j] - convex_pos[simplex[0]]
-                    angle = utils.RadToDeg(utils.VectorAngle(v,normal))
-                    break
-            if angle > 90:
-                poly.SetPolygon(i,c4d.CPolygon(simplex[0],simplex[1],simplex[2]))
-            else: poly.SetPolygon(i,c4d.CPolygon(simplex[0],simplex[2],simplex[1]))
-            i+=1
-        poly.Message(c4d.MSG_UPDATE)
-        return poly
+        makeconvex = True
+        try:
+            hull = spt.ConvexHull(PDTTranslation.c4dtonp(convex_pos))
+        except spt.QhullError:
+            makeconvex = False
+        if makeconvex:
+        # pos = nptoc4d(convex_pos)
+            poly = c4d.PolygonObject(0,0)
+            poly.ResizeObject(len(convex_pos),len(hull.simplices))
+            poly.SetAllPoints(convex_pos)
+            i = 0
+            for simplex in hull.simplices:
+                ptnum = [simplex[0],simplex[1],simplex[2]]
+                a = convex_pos[simplex[1]] - convex_pos[simplex[0]]
+                b = convex_pos[simplex[2]] - convex_pos[simplex[0]]
+                normal = a.Cross(b)
+                angle = 0
+                for j in range(len(convex_pos)):
+                    if j not in ptnum:
+                        v = convex_pos[j] - convex_pos[simplex[0]]
+                        angle = utils.RadToDeg(utils.VectorAngle(v,normal))
+                        break
+                if angle > 90:
+                    poly.SetPolygon(i,c4d.CPolygon(simplex[0],simplex[1],simplex[2]))
+                else: poly.SetPolygon(i,c4d.CPolygon(simplex[0],simplex[2],simplex[1]))
+                i+=1
+            poly.Message(c4d.MSG_UPDATE)
+            return poly
+        else:
+            print("skip building convexhull ")
+            return c4d.PolygonObject(0,0)
     
     @staticmethod
     def ReadCif(path):
-        if path == '':
-            return False
-        if os.path.isfile(path) == False:
-            print('path is not valid')
-            return False
-        #get crystal
-        cryst = pmg.Structure.from_file(path)
-
-        if cryst is None or False:
-            print('failed reading .cif file')
-            return False
-        else:
-            print('successfully reading cif file\n',path)
-
-        with open(path,'r') as f:
-            lines = f.readlines()
-            loopstart:int = 0
-            type_symbol:int = 0
-            site_label:int = 0
-            site_start:int = 0
-            site_num:int = 0
-            charge_dict = {}
-            label_dict = {}
-            for i in range(len(lines)):
-                if lines[i].find("loop_") != -1:
-                    if lines[i+1].find("_atom_site") != -1:
-                        print("loopstart: ", i)
-                        loopstart = i
-                if lines[i].find("_atom_site_type_symbol") != -1:
-                    type_symbol = i - loopstart -1
-                    print("type_symbol: ", type_symbol)
-                if lines[i].find("_atom_site_label") != -1:
-                    site_label = i - loopstart - 1
-                    print("site_label: ",site_label)
-                if lines[i].find("_atom_site") != -1:
-                    if lines[i+1].find("_atom_site") == -1:
-                        print("site_start: ",i+1)
-                        site_start = i+1
-                        while site_start+site_num < len(lines):
-                            if len(lines[site_start+site_num])>5 and lines[site_start+site_num].find("_") == -1:
-                                line = lines[site_start+site_num].strip().split()
-                                print(line)
-                                if len(line[type_symbol]) in {1,2}:
-                                    charge_dict[line[site_label]] = 0
-                                    label_dict[line[site_label]] = line[site_label]
-                                elif line[type_symbol][-2] == "+" or line[type_symbol][-1] == "+":
-                                    charge_dict[line[site_label]] = 1
-                                    label_dict[line[site_label]] = line[type_symbol][:-2]
-                                elif line[type_symbol][-2] == "-" or line[type_symbol][-1] == "-":
-                                    charge_dict[line[site_label]] = -1
-                                    label_dict[line[site_label]] = line[type_symbol][:-2]
-                            site_num = site_num + 1
-                        print("site_num: ", site_num)
-                        print("charge_dict: ", charge_dict)
-                        print("label_dict: ", label_dict)
-        return cryst,charge_dict,label_dict
-        
-    @staticmethod
-    def BuildPDTGeo(cryst, charge_dict, a_min=0, a_max=1, b_min=0, b_max=1, c_min=0, c_max=1):
-        a = cryst.lattice.matrix[0]
-        b = cryst.lattice.matrix[1]
-        c = cryst.lattice.matrix[2]
-        geo = PDTGeo()
-        for site in cryst:
-            a_f = site.frac_coords[0]
-            b_f = site.frac_coords[1]
-            c_f = site.frac_coords[2]
-            pos = site.coords
-            # cryst中的原子是经过对称变换的，平移后不会有重复点，只需扩展后剔除目标晶胞范围外的点
-            for i in range(a_min,a_max+1):
-                for j in range(b_min,b_max+1):
-                    for k in range(c_min,c_max+1):
-                        if a_f+i<=a_max and b_f+j<=b_max and c_f+k<=c_max:
-                            p = nptoc4d(pos+a*i + b*j + c*k)*100
-                            # print(i,j,k,p)
-                            ptnum = PDTFunction.addpoint(geo, p)
-                            if type(site.specie)==pmg.periodic_table.Species:
-                                PDTFunction.setpointattrib(geo, "symbol", ptnum, str(site.specie.element))
-                            else:
-                                PDTFunction.setpointattrib(geo, "symbol", ptnum, str(site.specie))
-                            PDTFunction.setpointattrib(geo, "label", ptnum, site.label)
-                            PDTFunction.setpointattrib(geo, "charge", ptnum, charge_dict[site.label])
-                            PDTFunction.setpointgroup(geo, site.label, ptnum, 1)
-                            # PDTFunction.setpointgroup(geo, atm.element, ptnum, 1)
-        return geo
+            if path == '':
+                return False
+            if os.path.isfile(path) == False:
+                print('path is not valid')
+                return False
+            cryst = pmg.Structure.from_file(path)
+            if cryst is None or False:
+                print('failed reading .cif file')
+                return False
+            else:
+                print('successfully reading cif file\n',path)
+            return cryst
 
 class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
 
@@ -197,14 +103,10 @@ class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
         self.hasobj = False
         self.update = False
         self.read = False
-        self.read_dprop = {}
+        self.dprop = {}
         self.parameters = []
-        self.geo = PDTGeo()
-
         self.symbols = []
-        self.labels = []
         self.label_dict = {}
-        # self.geo_bond = PDTGeo()
         self.rootobj = c4d.BaseObject(5140)
         self.SetOptimizeCache(True)
 
@@ -213,17 +115,18 @@ class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
         node[c4d.ID_CIF_ATOM_SEGMENTS] = 20
         node[c4d.ID_CIF_BOND_RADIUS] = 1.0
         node[c4d.ID_CIF_BUILD_MODE] = 0
-        node[c4d.ID_CIF_A_MIN] = 0
-        node[c4d.ID_CIF_A_MAX] = 1
-        node[c4d.ID_CIF_B_MIN] = 0
-        node[c4d.ID_CIF_B_MAX] = 1
-        node[c4d.ID_CIF_C_MIN] = 0
-        node[c4d.ID_CIF_C_MAX] = 1
+        node[c4d.ID_CIF_SHOW_CELL] = 1
+        node[c4d.ID_CIF_SHOW_BOND] = 1
+        node[c4d.ID_CIF_SHOW_POLY] = 1
+        node[c4d.ID_CIF_A] = 1
+        node[c4d.ID_CIF_B] = 1
+        node[c4d.ID_CIF_C] = 1
+        node[c4d.ID_CIF_CENTER_TYPE] = 0
 
         #read property file
         directory, _ = os.path.split(__file__)
         fn = os.path.join(directory, "elements.txt")
-        self.read_dprop = self.ReadProperty(fn)
+        self.dprop = self.ReadProperty(fn)
         return True
 
     def Read(self, node, hf, level):
@@ -231,6 +134,10 @@ class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
         node[c4d.ID_CIF_ATOM_RADIUS_SCALE] = hf.ReadFloat32()
         node[c4d.ID_CIF_ATOM_SEGMENTS] = hf.ReadInt32()
         node[c4d.ID_CIF_BOND_RADIUS] = hf.ReadFloat32()
+        node[c4d.ID_CIF_SHOW_CELL] = hf.ReadBool()
+        node[c4d.ID_CIF_SHOW_BOND] = hf.ReadBool()
+        node[c4d.ID_CIF_SHOW_POLY] = hf.ReadBool()
+        node[c4d.ID_CIF_BUILD_MODE] = hf.ReadInt32()
         self.hasobj = hf.ReadBool()
         self.read = True
         self.update = True
@@ -248,6 +155,10 @@ class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
         hf.WriteFloat32(node[c4d.ID_CIF_ATOM_RADIUS_SCALE])
         hf.WriteInt32(node[c4d.ID_CIF_ATOM_SEGMENTS])
         hf.WriteFloat32(node[c4d.ID_CIF_BOND_RADIUS])
+        hf.WriteBool(node[c4d.ID_CIF_SHOW_CELL])
+        hf.WriteBool(node[c4d.ID_CIF_SHOW_BOND])
+        hf.WriteBool(node[c4d.ID_CIF_SHOW_POLY])
+        hf.WriteInt32(node[c4d.ID_CIF_BUILD_MODE])
         hf.WriteBool(self.hasobj)
         count = len(self.parameters)
         hf.WriteInt32(count)
@@ -262,10 +173,11 @@ class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
         dest.update = copy.copy(self.update)
         dest.hasobj = copy.copy(self.hasobj)
         dest.read = copy.copy(self.read)
-        dest.read_dprop = copy.copy(self.read_dprop)
+        dest.dprop = copy.copy(self.dprop)
+        dest.label_dict = copy.copy(self.label_dict)
+        dest.symbols = copy.copy(self.symbols)
         dest.parameters = copy.copy(self.parameters)
-        # dest.geo = copy.copy(self.geo)
-        # dest.geo_bond = copy.copy(self.geo_bond)
+
         return True
 
     def GetDDescription(self, node, description, flags):
@@ -316,8 +228,8 @@ class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
         elif parametersLen != parametersNum:
             self.parameters.clear()
             for i in self.symbols:
-                self.parameters.append(self.read_dprop[i][0])
-                self.parameters.append(self.read_dprop[i][1])
+                self.parameters.append(self.dprop[i][0])
+                self.parameters.append(PDTTranslation.nptoc4d(self.dprop[i][1]))
 
         # Adds dynamic parameters
         idx = 0
@@ -390,172 +302,335 @@ class CHEM4DCrystal(c4d.plugins.ObjectData, CHEM4DHelper):
 
     def GetVirtualObjects(self, op, hh):
         # after click update button, cache all geometry under rootobj, change parameters of children only to speed up the plugin
+        if self.hasobj == True and self.rootobj.GetDown() == None:
+            self.update = True
+
         if self.update == True:
             self.rootobj = c4d.BaseObject(5140)
-            a_min = op[c4d.ID_CIF_A_MIN]
-            a_max = op[c4d.ID_CIF_A_MAX]
-            b_min = op[c4d.ID_CIF_B_MIN]
-            b_max = op[c4d.ID_CIF_B_MAX]
-            c_min = op[c4d.ID_CIF_C_MIN]
-            c_max = op[c4d.ID_CIF_C_MAX]
-            # check path, cif file and creat crystals cryst-------------------------------------------------------
-            cryst, charge_dict, label_dict = self.ReadCif(op[c4d.ID_CIF_PATH])
-            anion_label = []
-            cation_label = []
-            for key,value in charge_dict.items():
-                if value == -1:
-                    anion_label.append(key)
-                if value == 1:
-                    cation_label.append(key)
+            scale = np.array([100.0,100.0,-100.0])
+            delta = 0.0001
+
+            # read cif, get dictionary and label list----------------------------------------
+            cryst = self.ReadCif(op[c4d.ID_CIF_PATH])
             if cryst == False:
-                self.hasobj = False
-                self.update = False
-                return self.rootobj
+                return None
+            
+            charge_dict = {}
+
+            
+            sym = []
+            if op[c4d.ID_CIF_CENTER_TYPE] == 0:
+                cryst.add_oxidation_state_by_guess()
+                for site in cryst:
+                    charge_dict[site.label] = str(site.specie)[-1]
+                    self.label_dict[site.label] = str(site.specie.element)
+                    sym.append(str(site.specie.element))
+            elif op[c4d.ID_CIF_CENTER_TYPE] == 1:
+                poly_center = op[c4d.ID_CIF_POLY_CENTER].split()
+                for site in cryst:
+                    if self.GetSymbol(site) in poly_center:
+                        charge_dict[site.label] = "+"
+                    else: charge_dict[site.label] = "-"
+                    self.label_dict[site.label] = self.GetSymbol(site)
+                    sym.append(self.GetSymbol(site))
+            elif op[c4d.ID_CIF_CENTER_TYPE] == 2:
+                poly_center = op[c4d.ID_CIF_POLY_CENTER].split()
+                for site in cryst:
+                    if site.label in poly_center:
+                        charge_dict[site.label] = "+"
+                    else: charge_dict[site.label] = "-"
+                    self.label_dict[site.label] = self.GetSymbol(site)
+                    sym.append(self.GetSymbol(site))
+            self.symbols = list(set(sym))
+
             if self.read == False:
                 self.parameters.clear()
                 for i in self.symbols:
-                    self.parameters.append(self.read_dprop[i][0])
-                    self.parameters.append(self.read_dprop[i][1])
+                    self.parameters.append(self.dprop[i][0])
+                    self.parameters.append(PDTTranslation.nptoc4d(self.dprop[i][1]))
                 self.update = False
                 self.hasobj = True
-            if a_min<a_max and b_min<b_max and c_min<c_max:
-                # set null objects------------------------------------------------------------------------------
-                self.rootobj[c4d.ID_BASELIST_NAME] = os.path.basename(op[c4d.ID_CIF_PATH])
-                rootatom = c4d.BaseObject(5140)
-                rootatom[c4d.ID_BASELIST_NAME] = 'atom'
-                rootbond = c4d.BaseObject(5140)
-                rootbond[c4d.ID_BASELIST_NAME] = 'bond'
-                rootpoly = c4d.BaseObject(5140)
-                rootpoly[c4d.ID_BASELIST_NAME] = 'poly'
-                rootatom.InsertUnder(self.rootobj)
-                rootbond.InsertUnder(self.rootobj)
-                rootpoly.InsertUnder(self.rootobj)
-                # 构建目标大小的几何体------------------------------------------------------------
-                self.geo = self.BuildPDTGeo(cryst,charge_dict,a_min,a_max,b_min,b_max,c_min,c_max)
-                self.labels = self.geo.pointgroups
-                self.symbols = list(set(self.geo.GetPointAttrib("symbol")))
-                self.label_dict = label_dict
-                PDTFunction.removepoints(self.geo, self.geo.GetPointGroupIndex(anion_label))
-                
-                # 构建一个拓展了阴离子的几何体
-                geo_expand = self.BuildPDTGeo(cryst,charge_dict,a_min-1,a_max+1,b_min-1,b_max+1,c_min-1,c_max+1)
-                PDTFunction.removepoints(geo_expand, geo_expand.GetPointGroupIndex(cation_label))
-                ligands = c4dtonp(geo_expand.GetP())
 
-                # 收集需要拓展的阴离子位点序号
-                anion_index = []
-                geo_bond = PDT.PDTGeo()
-                for label in cation_label:
-                    centers = c4dtonp(self.geo.GetP(label))
+            # print(charge_dict,self.label_dict)
+            anion_label = []
+            cation_label = []
+            for key,value in charge_dict.items():
+                if value == "-":
+                    anion_label.append(key)
+                if value == "+":
+                    cation_label.append(key)
 
-                    # 计算cation为中心的凸包多面体和键------------------------------------------------------------------
-                    rootconvex = c4d.BaseObject(5140)
-                    rootconvex[c4d.ID_BASELIST_NAME] = 'poly_'+ label
+            # set null objects----------------------------------------------------------------
 
-                    # calculate k
-                    k,kt = self.FindKValue(centers[0],ligands)
+            self.rootobj[c4d.ID_BASELIST_NAME] = os.path.basename(op[c4d.ID_CIF_PATH])
+            rootpoly = c4d.BaseObject(5140)
+            rootpoly[c4d.ID_BASELIST_NAME] = 'poly'
+            rootpoly.InsertUnder(self.rootobj)
+
+            # setup unit cell line-------------------------------------------------------------------
+            geo_cell = PDTGeo()
+            axises = ["a","b","c"]
+            colors = [np.array([1.0,0.0,0.0]),np.array([0.0,1.0,0.0]),np.array([0.0,0.0,1.0])]
+            for i in range(3):
+                beginpos = np.array([0.0,0.0,0.0])
+                endpos = cryst.lattice.matrix[i]*scale
+                beginnum = PDTFunction.addpoint(geo_cell,beginpos)
+                endnum = PDTFunction.addpoint(geo_cell,endpos)
+                celledge = PDTFunction.addprim(geo_cell,'polyline',[beginnum,endnum])
+                PDTFunction.setprimattrib(geo_cell,'label',celledge,axises[i])
+                PDTFunction.setprimattrib(geo_cell,'Cd',celledge,colors[i])
+
+                beginpos = np.array([0.0,0.0,0.0]) + cryst.lattice.matrix[(i+1)%3]*scale
+                endpos = cryst.lattice.matrix[i]*scale + cryst.lattice.matrix[(i+1)%3]*scale
+                beginnum = PDTFunction.addpoint(geo_cell,beginpos)
+                endnum = PDTFunction.addpoint(geo_cell,endpos)
+                celledge = PDTFunction.addprim(geo_cell,'polyline',[beginnum,endnum])
+                PDTFunction.setprimattrib(geo_cell,'label',celledge,axises[i])
+                PDTFunction.setprimattrib(geo_cell,'Cd',celledge,colors[i])
+
+                beginpos = np.array([0.0,0.0,0.0]) + cryst.lattice.matrix[(i+2)%3]*scale
+                endpos = cryst.lattice.matrix[i]*scale + cryst.lattice.matrix[(i+2)%3]*scale
+                beginnum = PDTFunction.addpoint(geo_cell,beginpos)
+                endnum = PDTFunction.addpoint(geo_cell,endpos)
+                celledge = PDTFunction.addprim(geo_cell,'polyline',[beginnum,endnum])
+                PDTFunction.setprimattrib(geo_cell,'label',celledge,axises[i])
+                PDTFunction.setprimattrib(geo_cell,'Cd',celledge,colors[i])
+
+                beginpos = np.array([0.0,0.0,0.0]) + cryst.lattice.matrix[(i+1)%3]*scale + cryst.lattice.matrix[(i+2)%3]*scale
+                endpos = cryst.lattice.matrix[i]*scale + cryst.lattice.matrix[(i+1)%3]*scale + cryst.lattice.matrix[(i+2)%3]*scale
+                beginnum = PDTFunction.addpoint(geo_cell,beginpos)
+                endnum = PDTFunction.addpoint(geo_cell,endpos)
+                celledge = PDTFunction.addprim(geo_cell,'polyline',[beginnum,endnum])
+                PDTFunction.setprimattrib(geo_cell,'label',celledge,axises[i])
+                PDTFunction.setprimattrib(geo_cell,'Cd',celledge,colors[i])
+            
+            # make super cell to fill unit cell----------------------------------------------------
+            cryst.make_supercell([2,2,2])
+            m = cryst.lattice.matrix
+            geo = PDTGeo()
+            print("initialize NN")
+            NN = pmg_env.CrystalNN(distance_cutoffs=None,x_diff_weight=0,porous_adjustment=True)
+
+            # build atom inside boundary-----------------------------------------------------------
+            print("find inside")
+            inside = []
+            for i in range(len(cryst)):
+                f = cryst[i].frac_coords
+                if f[0] <= 0.5+delta and f[1] <= 0.5+delta and f[2] <= 0.5+delta:
+                    inside.append(i)
+                    p = cryst[i].coords * scale
+                    ptnum = PDTFunction.addpoint(geo, p)
+                    symbol = self.GetSymbol(cryst[i])
+                    PDTFunction.setpointattrib(geo, "symbol", ptnum, symbol)
+                    PDTFunction.setpointattrib(geo, "label", ptnum, cryst[i].label)
+                    PDTFunction.setpointattrib(geo, "Cd", ptnum, self.dprop[symbol][1])
+                    PDTFunction.setpointattrib(geo, "pscale", ptnum, self.dprop[symbol][0])
+                    PDTFunction.setpointgroup(geo, cryst[i].label, ptnum, 1)
+            labels = geo.pointgroups
+
+            # build poly and bond-------------------------------------------------------------------
+            geo_bond = PDTGeo()
+
+            poly_dict = {}
+            for label in cation_label:
+                rootconvex = c4d.BaseObject(5140)
+                rootconvex[c4d.ID_BASELIST_NAME] = label
+                rootconvex.InsertUnder(rootpoly)
+                poly_dict[label] = rootconvex
+
+            bondarr = np.empty(shape=(0,8))
+            for i in inside:
+                print("iterate site: "+str(i))
+                dicts = NN.get_nn_info(cryst,i)
+                # print("get NN info: "+str(i))
+                # begin property
+                beginpos = cryst[i].coords * scale
+                beginlabel = cryst[i].label
+                beginsymbol = self.GetSymbol(cryst[i])
+                pos = []
+                for dic in dicts:
+
+                    # end property
+                    endpos = dic["site"].coords * scale
+                    pos.append(endpos)
+                    endlabel = dic["site"].label
+                    endsymbol = self.GetSymbol(dic["site"])
+
+                    midpos = (beginpos + endpos) * 0.5
+
+                    p = dic["site"].coords
+                    f = np.linalg.solve(m.T,p)
                     
-                    for center in centers:
-                        # ind是凸包点的序号
-                        d, ind = kt.query(x=center, k=k)
-                        convex_pos = ligands[ind]
-                        anion_index.extend(ind.tolist())
-                        # 生成多面体
-                        if k>3:
-                            poly = self.ConvexHull(nptoc4d(convex_pos))
-                            poly.SetName(label)
-                            poly[c4d.ID_BASEOBJECT_USECOLOR] = 2
-                            poly[c4d.ID_BASEOBJECT_COLOR] = self.read_dprop[self.label_dict[label]][1]
-                            poly[c4d.ID_BASEOBJECT_XRAY] = 1
-                            poly.InsertUnder(rootconvex)
+                    outside = f[0] > 0.5+delta or f[1] > 0.5+delta or f[2] > 0.5+delta or f[0] < 0.0 or f[1] < 0.0 or f[2] < 0.0
+                    # print(f,outside)
+                    # 中心是阴离子且配体在外，不创建配体原子和键
+                    if not(charge_dict[cryst[i].label] == "-" and outside):
+                        # 中心是阳离子且配体在外，创建配体原子
+                        if charge_dict[cryst[i].label] == "+" and outside:
+                            # atom
+                            ptnum = PDTFunction.addpoint(geo, endpos)
+                            PDTFunction.setpointattrib(geo, "symbol", ptnum, endsymbol)
+                            PDTFunction.setpointattrib(geo, "label", ptnum, endlabel)
+                            PDTFunction.setpointattrib(geo, "Cd", ptnum, self.dprop[endsymbol][1])
+                            PDTFunction.setpointattrib(geo, "pscale", ptnum, self.dprop[symbol][0])
+                            PDTFunction.setpointgroup(geo, endlabel, ptnum, 1)
+                        # bond
+                        beginnum = PDTFunction.addpoint(geo_bond,beginpos)
+                        midnum = PDTFunction.addpoint(geo_bond,midpos)
+                        endnum = PDTFunction.addpoint(geo_bond,endpos)
 
-                        # 构筑化学键
-                        for i in ind:
-                            beginpos = nptoc4d(center)
-                            endpos = nptoc4d(ligands[i])
-                            midpos = (beginpos + endpos) * 0.5
+                        bondbegin = PDTFunction.addprim(geo_bond,'polyline',[beginnum,midnum])
+                        PDTFunction.setprimattrib(geo_bond,'label',bondbegin,beginlabel)
+                        PDTFunction.setprimattrib(geo_bond,'Cd',bondbegin,self.dprop[beginsymbol][1])
 
-                            beginnum = PDTFunction.addpoint(geo_bond,beginpos)
-                            midnum = PDTFunction.addpoint(geo_bond,midpos)
-                            endnum = PDTFunction.addpoint(geo_bond,endpos)
+                        bondend = PDTFunction.addprim(geo_bond,'polyline',[midnum,endnum])
+                        PDTFunction.setprimattrib(geo_bond,'label',bondend,endlabel)
+                        PDTFunction.setprimattrib(geo_bond,'Cd',bondend,self.dprop[endsymbol][1])
 
-                            bondbegin = PDTFunction.addprim(geo_bond,'polyline',[beginnum,midnum])
-                            bondend = PDTFunction.addprim(geo_bond,'polyline',[midnum,endnum])
+                # poly
+                pos = PDTTranslation.listtoc4d(pos)
+                if charge_dict[cryst[i].label] == "+" and len(pos)>3:
+                    poly = self.ConvexHull(pos)
+                    poly.SetName(cryst[i].label)
+                    poly[c4d.ID_BASEOBJECT_USECOLOR] = 2
+                    poly[c4d.ID_BASEOBJECT_COLOR] = PDTTranslation.nptoc4d(self.dprop[self.GetSymbol(cryst[i])][1])
+                    poly[c4d.ID_BASEOBJECT_XRAY] = 1
+                    poly.InsertUnder(poly_dict[cryst[i].label])
 
-                            beginsymbol = self.label_dict[label]
-                            endsymbol = getattr(geo_expand.points[i],"symbol")
-                            PDTFunction.setprimattrib(geo_bond,'symbol',bondbegin,beginsymbol)
-                            PDTFunction.setprimattrib(geo_bond,'symbol',bondend,endsymbol)
+            # clone to a*b*c grid
+            print("clone cell")
+            geos = []
+            geos_bond = []
+            geos_poly = []
+            xa, xb, xc = np.meshgrid(np.arange(op[c4d.ID_CIF_A]), np.arange(op[c4d.ID_CIF_B]), np.arange(op[c4d.ID_CIF_C]))
+            xa = xa.flatten()
+            xb = xb.flatten()
+            xc = xc.flatten()
 
+            for i in range(xa.size):
+                t = (m[0]*xa[i] + m[1]*xb[i] + m[2]*xc[i])*scale*0.5
+                for polynull in rootpoly.GetChildren():
+                    # print(polynull.GetName())
+                    for p in polynull.GetChildren():
+                        newp = p.GetClone(flags=c4d.COPYFLAGS_NONE)
+                        newp[c4d.ID_BASEOBJECT_REL_POSITION] = PDTTranslation.nptoc4d(t)
+                        geos_poly.append(newp)
+                geos.append(PDTFunction.translate(geo,t))
+                geos_bond.append(PDTFunction.translate(geo_bond,t))
+            
+            geo = PDTFunction.merge(geos)
+            geo_bond = PDTFunction.merge(geos_bond)
+            for poly in geos_poly:
+                poly.InsertUnder(poly_dict[poly.GetName()])
 
-                    rootconvex.InsertUnder(rootpoly)
-                for symbol in self.symbols:
-                    sweep = C4DFunction.CreateSweep(geo_bond,symbol)
-                    sweep[c4d.ID_BASEOBJECT_USECOLOR] = 2
-                    sweep[c4d.ID_BASEOBJECT_COLOR] = self.read_dprop[symbol][1]
-                    sweep.InsertUnder(rootbond)
+            # for label, poly in poly_dict.items():
+            #     doc.SetActiveObject(None, c4d.SELECTION_NEW)
+            #     print(poly)
+            #     children = poly.GetChildren()
+            #     for child in children:
+            #         print("set active for ", child.GetName())
+            #         doc.SetActiveObject(child,c4d.SELECTION_ADD)
+            
+            # skip replicate site
+            print("remove duplicate site")
+            arr_atom = np.empty(shape=(0,3))
+            for pt in geo.points:
+                arr_atom = np.vstack((arr_atom,pt.P))
+            arr_atom = arr_atom.astype("int32")
+            u, atom_ind = np.unique(arr_atom,axis=0,return_index=True)
 
-                # Generate atoms-------------------------------------------------------------------------------
-                # Create mesh
-                for i in anion_index:
-                    ptnum = PDTFunction.addpoint(self.geo, nptoc4d(ligands[i]))
-                    PDTFunction.setpointattrib(self.geo, "symbol", ptnum, getattr(geo_expand.points[i],"symbol"))
-                    PDTFunction.setpointattrib(self.geo, "label", ptnum, getattr(geo_expand.points[i],"label"))
-                    PDTFunction.setpointattrib(self.geo, "charge", ptnum, getattr(geo_expand.points[i],"charge"))
-                    PDTFunction.setpointgroup(self.geo, getattr(geo_expand.points[i],"label"), ptnum, 1)
-                mesh = C4DFunction.CreateMesh(self.geo)
-                mesh.InsertUnder(self.rootobj)
-                # Create sph and cloner
-                for label in self.labels:
-                    sph = C4DFunction.AddSphere(label, self.read_dprop[self.label_dict[label]][0])
-                    cln = C4DFunction.AddCloner(mesh, label, label, self.read_dprop[self.label_dict[label]][1])
-                    sph.InsertUnder(cln)
-                    cln.InsertUnder(rootatom)
+            arr_bond = np.empty(shape=(0,3))
+            for prim in geo_bond.primitives:
+                arr_bond = np.vstack((arr_bond,(geo_bond.points[prim.vertices[0].pointnumber].P + geo_bond.points[prim.vertices[1].pointnumber].P)*0.5))
+            arr_bond = arr_bond.astype("int32")
+            u, bond_ind = np.unique(arr_bond,axis=0,return_index=True)
 
-                self.update = False
-                self.hasobj = True
+            # bond
+            sweep = C4DFunction.CreateBond(geo_bond,"label",bond_ind)
+            sweep.SetName("bond")
+            sweep.InsertUnder(self.rootobj)
+
+            # atom
+            rootatom = C4DFunction.CreateAtom(geo,"label",atom_ind)
+            rootatom.InsertUnder(self.rootobj)
+
+            # cell
+            sweep = C4DFunction.CreateBond(geo_cell,"label")
+            sweep.SetName("cell")
+            sweep.InsertUnder(self.rootobj)
+
+            self.update = False
+            self.hasobj = True
+            op.SetDirty(c4d.DIRTYFLAGS_DESCRIPTION)
 
         if self.hasobj == False:
-                return None
-        if self.hasobj == True:   
-            #Change parameters-------------------------------------------------------------
-            #read static descriptions
-            # atomrad = op[c4d.ID_CIF_ATOM_RADIUS_SCALE]
-            # seg = op[c4d.ID_CIF_ATOM_SEGMENTS]
-            # bondrad = op[c4d.ID_CIF_BOND_RADIUS]
+            return None
 
+        # Change parameters-------------------------------------------------------------
+        # read static descriptions
+        atomrad = op[c4d.ID_CIF_ATOM_RADIUS_SCALE]
+        seg = op[c4d.ID_CIF_ATOM_SEGMENTS]
+        bondrad = op[c4d.ID_CIF_BOND_RADIUS]
+        showbond = op[c4d.ID_CIF_SHOW_BOND]
+        showpoly = op[c4d.ID_CIF_SHOW_POLY]
+        showcell = op[c4d.ID_CIF_SHOW_CELL]
 
-            # #change parameters of cloner atom
-            # clns = self.rootobj.GetDownLast().GetChildren()
-            # # clns.reverse()
-            # for i in range(len(clns)):
-            #     name = self.realsymbol[clns[i].GetName()]
-            #     ind = self.symbols.index(name)
-            #     clns[i][c4d.ID_MG_TRANSFORM_COLOR] = self.parameters[2*ind+1]
-            #     clns[i].GetDown()[c4d.PRIM_SPHERE_SUB] = seg
-            #     if op[c4d.ID_CIF_BUILD_MODE] == 3:
-            #         clns[i].GetDown()[c4d.PRIM_SPHERE_RAD] = 10 * bondrad
-            #     else:
-            #         clns[i].GetDown()[c4d.PRIM_SPHERE_RAD] = self.parameters[2*ind]*atomrad
-            
-            # #change parameters of sweep bond
-            # sweeps = self.rootobj.GetDown().GetNext().GetNext().GetChildren()
-            # # print(sweeps)
-            # # sweeps.reverse()
-            # for i in range(len(sweeps)):
-            #     name = sweeps[i].GetName()
-            #     ind = self.symbols.index(name)
-            #     sweeps[i].GetDown()[c4d.PRIM_CIRCLE_RADIUS] = 10 * bondrad
-            #     sweeps[i][c4d.ID_BASEOBJECT_COLOR] = self.parameters[2*ind+1]
-            
-            # #always build bond, but show it if nessary
-            # if op[c4d.ID_MOL_BUILD_MODE] == 1:
-            #     self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 1   #default is 2, hide is 1, show is 0
-            #     self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 1
-            # else:
-            #     self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 2
-            #     self.rootobj.GetDown().GetNext()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 2
-            return self.rootobj
+        # #change parameters of cloner atom
+        clnnull = self.rootobj.GetDown().GetNext().GetDown().GetNext()
+        clns = clnnull.GetChildren()
+        # clns.reverse()
+        for i in range(len(clns)):
+            name = self.label_dict[clns[i].GetName()]
+            ind = self.symbols.index(name)
+            clns[i][c4d.ID_MG_TRANSFORM_COLOR] = self.parameters[2*ind+1]
+            clns[i].GetDown()[c4d.PRIM_SPHERE_SUB] = seg
+            if op[c4d.ID_CIF_BUILD_MODE] == 1:
+                clns[i].GetDown()[c4d.PRIM_SPHERE_RAD] = 10 * bondrad
+            else:
+                clns[i].GetDown()[c4d.PRIM_SPHERE_RAD] = self.parameters[2*ind]*atomrad
+        
+        # #change parameters of sweep bond
+        sweepnull = self.rootobj.GetDown().GetNext().GetNext()
+        sweeps = sweepnull.GetChildren()
+        # # print(sweeps)
+        # # sweeps.reverse()
+        for i in range(len(sweeps)):
+            name = self.label_dict[sweeps[i].GetName()]
+            ind = self.symbols.index(name)
+            sweeps[i].GetDown()[c4d.PRIM_CIRCLE_RADIUS] = 10 * bondrad
+            sweeps[i][c4d.ID_BASEOBJECT_COLOR] = self.parameters[2*ind+1]
+        # #change parameters of poly
+        polynull = self.rootobj.GetDownLast()
+        polys = polynull.GetChildren()
+        for poly in polys:
+            name = self.label_dict[poly.GetName()]
+            ind = self.symbols.index(name)
+            for p in poly.GetChildren():
+                p[c4d.ID_BASEOBJECT_COLOR] = self.parameters[2*ind+1]
+        #always build bond and poly, but show it if nessary
+        if showcell == 0:
+            self.rootobj.GetDown()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 1   #default is 2, hide is 1, show is 0
+            self.rootobj.GetDown()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 1
+        else:
+            self.rootobj.GetDown()[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 2   
+            self.rootobj.GetDown()[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 2
+        
+        if showbond == 0:
+            sweepnull[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 1   
+            sweepnull[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 1
+        else:
+            sweepnull[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 2
+            sweepnull[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 2
+
+        
+        if showpoly == 0:
+            polynull[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 1
+            polynull[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 1
+        else:
+            polynull[c4d.ID_BASEOBJECT_VISIBILITY_EDITOR] = 2
+            polynull[c4d.ID_BASEOBJECT_VISIBILITY_RENDER] = 2
+
+        return self.rootobj
 
 # main
 if __name__ == "__main__":
